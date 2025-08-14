@@ -1,36 +1,25 @@
 import { type NextRequest, NextResponse } from "next/server"
 
-// In-memory storage for quiz attempts
-const attempts = new Map<
-  string,
-  {
-    attemptId: string
-    answers: Array<{ questionId: number; selectedIndex: number }>
-    remainingSec: number
-    isFinished: boolean
-    lastSaved: number
-  }
->()
+const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000"
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { attemptId, answers, remainingSec } = body
-
-    if (!attemptId) {
-      return NextResponse.json({ error: "attemptId is required" }, { status: 400 })
-    }
-
-    // Save the attempt state
-    attempts.set(attemptId, {
-      attemptId,
-      answers: answers || [],
-      remainingSec: remainingSec || 60,
-      isFinished: false,
-      lastSaved: Date.now(),
+    
+    const response = await fetch(`${BACKEND_URL}/api/attempt/save`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
     })
 
-    return NextResponse.json({ success: true })
+    if (!response.ok) {
+      throw new Error(`Backend responded with status: ${response.status}`)
+    }
+
+    const result = await response.json()
+    return NextResponse.json(result)
   } catch (error) {
     console.error("Save attempt error:", error)
     return NextResponse.json({ error: "Failed to save attempt" }, { status: 500 })

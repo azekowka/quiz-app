@@ -83,12 +83,56 @@ async def get_attempt(attempt_id: str):
 
 @app.post("/api/attempt/finish")
 async def finish_attempt(request: dict):
-    """Mark attempt as finished"""
+    """Mark attempt as finished and calculate results"""
     attempt_id = request.get("attemptId")
-    if attempt_id and attempt_id in attempts_storage:
+    if not attempt_id:
+        raise HTTPException(status_code=400, detail="attemptId is required")
+    
+    # Get existing attempt or create empty one
+    attempt = attempts_storage.get(attempt_id, {
+        "answers": [],
+        "remainingSec": 0,
+        "isFinished": False
+    })
+    
+    user_answers = attempt["answers"]
+    total_questions = len(quiz_questions)
+    correct_count = 0
+    incorrect_count = 0
+    
+    # Check each user answer against correct answers
+    for user_answer in user_answers:
+        question = next((q for q in quiz_questions if q["id"] == user_answer["questionId"]), None)
+        if question:
+            if question["correctIndex"] == user_answer["selectedIndex"]:
+                correct_count += 1
+            else:
+                incorrect_count += 1
+    
+    total_answered = len(user_answers)
+    unanswered_count = total_questions - total_answered
+    correct_percentage = round((correct_count / total_questions) * 100) if total_questions > 0 else 0
+    incorrect_percentage = round((incorrect_count / total_questions) * 100) if total_questions > 0 else 0
+    
+    results = {
+        "totalQuestions": total_questions,
+        "totalAnswered": total_answered,
+        "correctCount": correct_count,
+        "incorrectCount": incorrect_count,
+        "correctPercentage": correct_percentage,
+        "incorrectPercentage": incorrect_percentage,
+        "unansweredCount": unanswered_count
+    }
+    
+    # Mark attempt as finished
+    if attempt_id in attempts_storage:
         attempts_storage[attempt_id]["isFinished"] = True
         attempts_storage[attempt_id]["finishedAt"] = datetime.now().isoformat()
-    return {"status": "finished"}
+    
+    return {
+        "status": "finished",
+        "results": results
+    }
 
 if __name__ == "__main__":
     import uvicorn
