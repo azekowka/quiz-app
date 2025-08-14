@@ -2,9 +2,9 @@ import { type NextRequest, NextResponse } from "next/server"
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000"
 
-export async function GET(request: NextRequest, { params }: { params: { attemptId: string } }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ attemptId: string }> }) {
   try {
-    const { attemptId } = params
+    const { attemptId } = await params
 
     if (!attemptId) {
       return NextResponse.json({ error: "attemptId is required" }, { status: 400 })
