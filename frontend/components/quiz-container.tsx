@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useEffect, useCallback, useRef } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
@@ -8,51 +8,38 @@ import { Loader2, CheckCircle, RotateCcw, WifiOff } from "lucide-react"
 import { QuizQuestion } from "./quiz-question"
 import { QuizStatus } from "./quiz-status"
 import { QuizResults } from "./quiz-results"
-
-interface Question {
-  id: number
-  body: string
-  options: string[]
-  correctIndex: number
-}
-
-interface Answer {
-  questionId: number
-  selectedIndex: number
-}
-
-interface QuizState {
-  questions: Question[]
-  answers: Answer[]
-  remainingSec: number
-  isFinished: boolean
-  attemptId: string
-  results?: {
-    totalQuestions: number
-    totalAnswered: number
-    correctCount: number
-    incorrectCount: number
-    correctPercentage: number
-    incorrectPercentage: number
-    unansweredCount: number
-  }
-}
+import { useQuizStore } from "@/lib/quiz-store"
 
 export function QuizContainer() {
-  const [state, setState] = useState<QuizState>({
-    questions: [],
-    answers: [],
-    remainingSec: 60,
-    isFinished: false,
-    attemptId: "",
-    results: undefined,
-  })
-
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle")
-  const [isRecovering, setIsRecovering] = useState(false)
-  const [isOnline, setIsOnline] = useState(true)
+  const {
+    questions,
+    answers,
+    remainingSec,
+    isFinished,
+    attemptId,
+    results,
+    loading,
+    error,
+    saveStatus,
+    isRecovering,
+    isOnline,
+    setQuestions,
+    setAnswers,
+    addAnswer,
+    setRemainingSec,
+    decrementTime,
+    setIsFinished,
+    setAttemptId,
+    setResults,
+    setLoading,
+    setError,
+    setSaveStatus,
+    setIsRecovering,
+    setIsOnline,
+    reset,
+    getAnswerForQuestion,
+    getAnsweredCount,
+  } = useQuizStore()
 
   const saveTimeoutRef = useRef<NodeJS.Timeout>()
   const autoSaveIntervalRef = useRef<NodeJS.Timeout>()
@@ -74,17 +61,17 @@ export function QuizContainer() {
 
   // Initialize or get existing attempt ID
   useEffect(() => {
-    let attemptId = localStorage.getItem("quiz-attempt-id")
-    if (!attemptId) {
-      attemptId = `attempt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-      localStorage.setItem("quiz-attempt-id", attemptId)
+    let storedAttemptId = localStorage.getItem("quiz-attempt-id")
+    if (!storedAttemptId) {
+      storedAttemptId = `attempt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      localStorage.setItem("quiz-attempt-id", storedAttemptId)
     }
-    setState((prev) => ({ ...prev, attemptId }))
-  }, [])
+    setAttemptId(storedAttemptId)
+  }, [setAttemptId])
 
   // Load questions and restore state
   useEffect(() => {
-    if (!state.attemptId) return
+    if (!attemptId) return
 
     const loadQuiz = async () => {
       try {
@@ -94,11 +81,12 @@ export function QuizContainer() {
         // Load questions
         const questionsResponse = await fetch("/api/quiz")
         if (!questionsResponse.ok) throw new Error("Не удалось загрузить вопросы")
-        const questions = await questionsResponse.json()
+        const questionsData = await questionsResponse.json()
+        setQuestions(questionsData)
 
         // Try to restore previous state
         setIsRecovering(true)
-        const stateResponse = await fetch(`/api/attempt/${state.attemptId}`)
+        const stateResponse = await fetch(`/api/attempt/${attemptId}`)
         if (!stateResponse.ok) throw new Error("Не удалось загрузить сохраненное состояние")
         const savedState = await stateResponse.json()
 
@@ -108,7 +96,7 @@ export function QuizContainer() {
         // If we have a saved state, check if we need to adjust the timer
         if (savedState.answers && savedState.answers.length > 0) {
           // Get the last save timestamp from localStorage
-          const lastSaveTime = localStorage.getItem(`quiz-last-save-${state.attemptId}`)
+          const lastSaveTime = localStorage.getItem(`quiz-last-save-${attemptId}`)
           if (lastSaveTime && !recoveredIsFinished) {
             const timePassed = Math.floor((Date.now() - Number.parseInt(lastSaveTime)) / 1000)
             recoveredRemainingSec = Math.max(0, recoveredRemainingSec - timePassed)
@@ -121,7 +109,7 @@ export function QuizContainer() {
                 await fetch("/api/attempt/finish", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ attemptId: state.attemptId }),
+                  body: JSON.stringify({ attemptId }),
                 })
               } catch (err) {
                 console.error("Failed to finish quiz on recovery:", err)
@@ -130,13 +118,9 @@ export function QuizContainer() {
           }
         }
 
-        setState((prev) => ({
-          ...prev,
-          questions,
-          answers: savedState.answers || [],
-          remainingSec: recoveredRemainingSec,
-          isFinished: recoveredIsFinished,
-        }))
+        setAnswers(savedState.answers || [])
+        setRemainingSec(recoveredRemainingSec)
+        setIsFinished(recoveredIsFinished)
 
         lastSaveTimeRef.current = Date.now()
       } catch (err) {
@@ -148,10 +132,10 @@ export function QuizContainer() {
     }
 
     loadQuiz()
-  }, [state.attemptId])
+  }, [attemptId, setLoading, setError, setQuestions, setIsRecovering, setAnswers, setRemainingSec, setIsFinished])
 
   const saveToServer = useCallback(async () => {
-    if (!state.attemptId || state.isFinished || !isOnline) return
+    if (!attemptId || isFinished || !isOnline) return
 
     try {
       setSaveStatus("saving")
@@ -161,15 +145,15 @@ export function QuizContainer() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          attemptId: state.attemptId,
-          answers: state.answers,
-          remainingSec: state.remainingSec,
+          attemptId,
+          answers,
+          remainingSec,
         }),
       })
 
       if (!response.ok) throw new Error("Failed to save")
 
-      localStorage.setItem(`quiz-last-save-${state.attemptId}`, Date.now().toString())
+      localStorage.setItem(`quiz-last-save-${attemptId}`, Date.now().toString())
       lastSaveTimeRef.current = Date.now()
 
       setSaveStatus("saved")
@@ -178,10 +162,10 @@ export function QuizContainer() {
       console.error("Save failed:", err)
       setSaveStatus("idle")
     }
-  }, [state.attemptId, state.answers, state.remainingSec, state.isFinished, isOnline])
+  }, [attemptId, answers, remainingSec, isFinished, isOnline, setSaveStatus])
 
   const finishQuiz = useCallback(async () => {
-    if (state.isFinished) return
+    if (isFinished) return
 
     try {
       if (isOnline) {
@@ -191,101 +175,75 @@ export function QuizContainer() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            attemptId: state.attemptId,
+            attemptId,
           }),
         })
 
         if (response.ok) {
           const data = await response.json()
-          setState((prev) => ({
-            ...prev,
-            isFinished: true,
-            results: data.results,
-          }))
+          setIsFinished(true)
+          setResults(data.results)
         } else {
-          setState((prev) => ({ ...prev, isFinished: true }))
+          setIsFinished(true)
         }
       } else {
-        setState((prev) => ({ ...prev, isFinished: true }))
+        setIsFinished(true)
       }
     } catch (err) {
       console.error("Failed to finish quiz:", err)
       // Still mark as finished locally
-      setState((prev) => ({ ...prev, isFinished: true }))
+      setIsFinished(true)
     }
-  }, [state.attemptId, state.isFinished, isOnline])
+  }, [attemptId, isFinished, isOnline, setIsFinished, setResults])
 
   const handleSubmit = () => {
     finishQuiz()
   }
 
   const handleAnswerSelect = (questionId: number, selectedIndex: number) => {
-    if (state.isFinished) return
-
-    setState((prev) => {
-      const newAnswers = prev.answers.filter((a) => a.questionId !== questionId)
-      newAnswers.push({ questionId, selectedIndex })
-      return { ...prev, answers: newAnswers }
-    })
-  }
-
-  const getAnswerForQuestion = (questionId: number): number | undefined => {
-    return state.answers.find((a) => a.questionId === questionId)?.selectedIndex
-  }
-
-  const getAnsweredCount = () => {
-    return state.answers.length
+    if (isFinished) return
+    addAnswer({ questionId, selectedIndex })
   }
 
   const retry = () => {
     // Clear all stored data for this attempt
     localStorage.removeItem("quiz-attempt-id")
-    localStorage.removeItem(`quiz-last-save-${state.attemptId}`)
+    localStorage.removeItem(`quiz-last-save-${attemptId}`)
     window.location.reload()
   }
 
   const startNewQuiz = () => {
     // Clear current attempt data
     localStorage.removeItem("quiz-attempt-id")
-    localStorage.removeItem(`quiz-last-save-${state.attemptId}`)
+    localStorage.removeItem(`quiz-last-save-${attemptId}`)
 
     // Generate new attempt ID
     const newAttemptId = `attempt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
     localStorage.setItem("quiz-attempt-id", newAttemptId)
 
     // Reset state
-    setState({
-      questions: state.questions,
-      answers: [],
-      remainingSec: 60,
-      isFinished: false,
-      attemptId: newAttemptId,
-      results: undefined,
-    })
+    reset()
+    setAttemptId(newAttemptId)
   }
 
   // Timer countdown effect
   useEffect(() => {
-    if (state.isFinished || state.remainingSec <= 0) return
+    if (isFinished || remainingSec <= 0) return
 
     const timer = setInterval(() => {
-      setState((prev) => {
-        const newRemainingSec = prev.remainingSec - 1
-        if (newRemainingSec <= 0) {
-          // Time's up - finish the quiz
-          finishQuiz()
-          return { ...prev, remainingSec: 0, isFinished: true }
-        }
-        return { ...prev, remainingSec: newRemainingSec }
-      })
+      decrementTime()
+      if (remainingSec <= 1) {
+        // Time's up - finish the quiz
+        finishQuiz()
+      }
     }, 1000)
 
     return () => clearInterval(timer)
-  }, [state.isFinished, state.remainingSec, finishQuiz])
+  }, [isFinished, remainingSec, decrementTime, finishQuiz])
 
   // Autosave every 5 seconds
   useEffect(() => {
-    if (state.isFinished) return
+    if (isFinished) return
 
     autoSaveIntervalRef.current = setInterval(() => {
       saveToServer()
@@ -296,11 +254,11 @@ export function QuizContainer() {
         clearInterval(autoSaveIntervalRef.current)
       }
     }
-  }, [saveToServer, state.isFinished])
+  }, [saveToServer, isFinished])
 
   // Debounced autosave on answer changes
   useEffect(() => {
-    if (state.answers.length === 0) return
+    if (answers.length === 0) return
 
     // Clear existing timeout
     if (saveTimeoutRef.current) {
@@ -317,7 +275,7 @@ export function QuizContainer() {
         clearTimeout(saveTimeoutRef.current)
       }
     }
-  }, [state.answers, saveToServer])
+  }, [answers, saveToServer])
 
   if (loading) {
     return (
@@ -362,16 +320,16 @@ export function QuizContainer() {
 
       {/* Quiz status */}
       <QuizStatus
-        remainingSec={state.remainingSec}
+        remainingSec={remainingSec}
         answeredCount={getAnsweredCount()}
-        totalQuestions={state.questions.length}
-        isFinished={state.isFinished}
+        totalQuestions={questions.length}
+        isFinished={isFinished}
         saveStatus={saveStatus}
       />
 
-      {state.isFinished && state.results ? (
+      {isFinished && results ? (
         <div className="space-y-6">
-          <QuizResults results={state.results} />
+          <QuizResults results={results} />
           <div className="text-center">
             <Button onClick={startNewQuiz} variant="outline" size="lg">
               <RotateCcw className="h-4 w-4 mr-2" />
@@ -379,13 +337,13 @@ export function QuizContainer() {
             </Button>
           </div>
         </div>
-      ) : state.isFinished ? (
+      ) : isFinished ? (
         // Fallback for finished quiz without results
         <Alert>
           <CheckCircle className="h-4 w-4" />
           <AlertDescription className="flex items-center justify-between">
             <span>
-              {state.remainingSec <= 0
+              {remainingSec <= 0
                 ? `Время вышло! Квиз завершен. Отмечено ответов: ${getAnsweredCount()}/10`
                 : `Квиз завершен! Отмечено ответов: ${getAnsweredCount()}/10`}
             </span>
@@ -399,14 +357,14 @@ export function QuizContainer() {
         <>
           {/* Questions */}
           <div className="space-y-4">
-            {state.questions.map((question, index) => (
+            {questions.map((question, index) => (
               <QuizQuestion
                 key={question.id}
                 question={question}
                 questionNumber={index + 1}
                 selectedIndex={getAnswerForQuestion(question.id)}
                 onAnswerSelect={handleAnswerSelect}
-                disabled={state.isFinished}
+                disabled={isFinished}
               />
             ))}
           </div>
@@ -416,7 +374,7 @@ export function QuizContainer() {
               onClick={handleSubmit}
               size="lg"
               className="min-w-[200px]"
-              disabled={state.isFinished || getAnsweredCount() === 0}
+              disabled={isFinished || getAnsweredCount() === 0}
             >
               Отправить результаты
             </Button>
